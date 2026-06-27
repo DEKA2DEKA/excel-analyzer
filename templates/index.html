@@ -3,7 +3,7 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-8">
+    <div class="col-md-10">
         <div class="text-center mb-4">
             <h2><i class="bi bi-file-earmark-spreadsheet"></i> Анализ Excel-файла</h2>
             <p class="text-muted">Загрузите файл договоров (.xlsx, .xls, .csv) — программа проанализирует структуру
@@ -30,6 +30,7 @@
     </div>
 </div>
 
+<div id="headerSelection" class="d-none mt-4"></div>
 <div id="reportContainer" class="d-none mt-4"></div>
 {% endblock %}
 
@@ -40,7 +41,10 @@ const fileInput = document.getElementById('fileInput');
 const dropZoneContent = document.getElementById('dropZoneContent');
 const dropZoneProgress = document.getElementById('dropZoneProgress');
 const errorAlert = document.getElementById('errorAlert');
+const headerSelection = document.getElementById('headerSelection');
 const reportContainer = document.getElementById('reportContainer');
+
+let currentFile = null;
 
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
     dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); });
@@ -62,6 +66,9 @@ function handleFile(file) {
         return;
     }
     hideError();
+    currentFile = file;
+    headerSelection.classList.add('d-none');
+    reportContainer.classList.add('d-none');
     dropZoneContent.classList.add('d-none');
     dropZoneProgress.classList.remove('d-none');
 
@@ -73,12 +80,39 @@ function handleFile(file) {
             dropZoneContent.classList.remove('d-none');
             dropZoneProgress.classList.add('d-none');
             if (data.error) { showError(data.error); return; }
-            showReport(data);
+            if (data.status === 'needs_header_selection') {
+                showHeaderSelection(data);
+            } else if (data.status === 'complete') {
+                showReport(data);
+            }
         })
         .catch(err => {
             dropZoneContent.classList.remove('d-none');
             dropZoneProgress.classList.add('d-none');
             showError('Ошибка загрузки: ' + err.message);
+        });
+}
+
+function analyzeWithHeader(headerRow) {
+    dropZoneContent.classList.add('d-none');
+    dropZoneProgress.classList.remove('d-none');
+    headerSelection.classList.add('d-none');
+
+    const formData = new FormData();
+    formData.append('file', currentFile);
+    formData.append('header_row', headerRow);
+    fetch('/api/analyze', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            dropZoneContent.classList.remove('d-none');
+            dropZoneProgress.classList.add('d-none');
+            if (data.error) { showError(data.error); return; }
+            if (data.status === 'complete') showReport(data);
+        })
+        .catch(err => {
+            dropZoneContent.classList.remove('d-none');
+            dropZoneProgress.classList.add('d-none');
+            showError('Ошибка: ' + err.message);
         });
 }
 
@@ -91,33 +125,80 @@ function hideError() {
     errorAlert.classList.add('d-none');
 }
 
+function showHeaderSelection(data) {
+    let html = `
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-question-circle text-warning"></i>
+                Выбор строки заголовков
+                <span class="badge bg-warning text-dark ms-2">Уверенность: ${data.header_info.confidence}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Система не уверена, какая строка содержит заголовки таблицы. Выберите подходящую:</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light">
+                            <tr><th style="width:40px">#</th><th style="width:60px">Строка</th><th>Содержимое</th><th style="width:80px">Рейтинг</th><th style="width:100px"></th></tr>
+                        </thead>
+                        <tbody>`;
+    data.preview_rows.forEach((r, idx) => {
+        const isBest = idx === 0;
+        const cells = r.cells.map(c => c || '').join(' | ');
+        html += `<tr class="${isBest ? 'table-primary' : ''}">
+            <td>${idx + 1}</td>
+            <td>${r.row_number}</td>
+            <td class="small text-muted text-truncate" style="max-width:500px">${cells}</td>
+            <td>${r.score}</td>
+            <td><button class="btn btn-sm ${isBest ? 'btn-primary' : 'btn-outline-primary'}" onclick="analyzeWithHeader(${r.row_number})">${isBest ? 'Рекомендуется' : 'Выбрать'}</button></td>
+        </tr>`;
+    });
+    html += `</tbody></table></div>
+            <div class="text-muted small mt-2">
+                <i class="bi bi-info-circle"></i> Строка с заголовками обычно содержит текст (номер, наименование, контрагент...),
+                без цифр и дат. Если все строки выглядят как данные — выберите первую.
+            </div>
+        </div></div>`;
+    headerSelection.innerHTML = html;
+    headerSelection.classList.remove('d-none');
+}
+
 function showReport(data) {
     const a = data.analysis;
+    const headerBadge = a.header_confidence === 'manual'
+        ? `<span class="badge bg-info ms-2">Выбрана строка ${a.header_number}</span>`
+        : `<span class="badge bg-${a.header_confidence === 'high' ? 'success' : 'warning'} ms-2">Строка ${a.header_number} (${a.header_confidence})</span>`;
+
     let html = `
         <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-file-text"></i> ${data.filename}</span>
+                <span><i class="bi bi-file-text"></i> ${data.filename} ${headerBadge}</span>
                 <small class="text-muted">${a.total_rows} строк, ${a.total_columns} колонок</small>
             </div>
         </div>
 
         <div class="row g-3 mb-3">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stat-card">
                     <div class="stat-icon bg-primary"><i class="bi bi-table"></i></div>
                     <div><div class="stat-number">${a.total_columns}</div><div class="stat-label">Колонок</div></div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stat-card">
                     <div class="stat-icon bg-success"><i class="bi bi-rows"></i></div>
-                    <div><div class="stat-number">${a.total_rows}</div><div class="stat-label">Строк</div></div>
+                    <div><div class="stat-number">${a.total_rows}</div><div class="stat-label">Строк данных</div></div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="stat-card">
                     <div class="stat-icon bg-warning"><i class="bi bi-tag"></i></div>
                     <div><div class="stat-number">${a.suggestions.length}</div><div class="stat-label">Сопоставлено полей</div></div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-icon bg-info"><i class="bi bi-gear"></i></div>
+                    <div><div class="stat-number">${a.header_number}</div><div class="stat-label">Строка шапки</div></div>
                 </div>
             </div>
         </div>`;
@@ -152,9 +233,7 @@ function showReport(data) {
     a.columns.forEach(c => {
         const mapped = c.mapped_field
             ? `<span class="badge bg-success">${c.mapped_field}</span>`
-            : (c.mapping_confidence
-                ? `<span class="badge bg-warning text-dark">возможно ${c.mapped_field}</span>`
-                : `<span class="badge bg-secondary">не найдено</span>`);
+            : `<span class="badge bg-secondary">не найдено</span>`;
         const examples = c.sample_values.slice(0, 3).join(', ');
         html += `<tr>
             <td><strong>${c.name}</strong></td>
@@ -162,7 +241,7 @@ function showReport(data) {
             <td>${c.non_null}</td>
             <td>${c.null_pct}%</td>
             <td>${c.unique_count}</td>
-            <td class="small text-muted">${examples || '—'}</td>
+            <td class="small text-muted text-truncate" style="max-width:200px">${examples || '—'}</td>
             <td>${mapped}</td>
         </tr>`;
     });
@@ -201,7 +280,7 @@ function showReport(data) {
     </div>`;
 
     html += `<div class="text-center mb-4">
-        <a href="${data.report_url}" class="btn btn-outline-primary" onclick="downloadReport(event, this)">
+        <a href="${data.report_url}" class="btn btn-outline-primary" target="_blank">
             <i class="bi bi-download"></i> Скачать отчёт JSON
         </a>
         <button class="btn btn-outline-secondary ms-2" onclick="location.reload()">
@@ -212,23 +291,6 @@ function showReport(data) {
     reportContainer.innerHTML = html;
     reportContainer.classList.remove('d-none');
     reportContainer.scrollIntoView({ behavior: 'smooth' });
-}
-
-function downloadReport(e, btn) {
-    e.preventDefault();
-    fetch('/api/analyze', {
-        method: 'POST',
-        body: (() => { const fd = new FormData(); fd.append('file', fileInput.files[0]); return fd; })()
-    })
-    .then(r => r.blob())
-    .then(blob => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'report.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    });
 }
 </script>
 {% endblock %}

@@ -4,9 +4,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, url_for
-
-
-app = Flask(__name__)
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
@@ -45,12 +43,10 @@ DOGOVOR_RUSSIAN_ALIASES = {
     'менеджер': 'responsible', 'куратор': 'responsible',
     'примечание': 'notes', 'комментарий': 'notes', 'заметки': 'notes',
     'тип': 'contract_type', 'вид': 'contract_type',
+    'дата': 'received_date', 'дата получения': 'received_date',
+    'дата подписания': 'signing_date', 'дата начала': 'received_date',
+    'дата окончания': 'archive_date', 'дата архивации': 'archive_date',
 }
-
-NUMERIC_SUGGEST_FIELDS = ['amount']
-
-DATE_FIELDS = ['received_date', 'processing_date', 'approval_date',
-               'signing_date', 'sent_date', 'archive_date', 'destroyed_date']
 
 
 def to_native(val):
@@ -67,6 +63,91 @@ def to_native(val):
     if isinstance(val, (pd.Timedelta,)):
         return str(val)
     return val
+
+
+def read_raw_rows(filepath, ext, max_rows=20):
+    if ext == '.csv':
+        import csv
+        rows = []
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            reader = csv.reader(f)
+            for i, row in enumerate(reader):
+                if i >= max_rows:
+                    break
+                rows.append(row)
+        max_cols = max(len(r) for r in rows) if rows else 0
+        padded = [r + [''] * (max_cols - len(r)) for r in rows]
+        df_raw = pd.DataFrame(padded)
+    else:
+        df_raw = pd.read_excel(filepath, header=None, nrows=max_rows)
+    return df_raw
+
+
+def detect_header_row(df_raw, max_scan=15):
+    header_candidates = []
+    scores = []
+
+    for i in range(min(len(df_raw), max_scan)):
+        row = df_raw.iloc[i]
+        score = 0
+        cell_count = 0
+        for val in row:
+            s = str(val).strip()
+            if not s or s.lower() == 'nan':
+                continue
+            cell_count += 1
+            s_lower = s.lower()
+
+            if s_lower in DOGOVOR_RUSSIAN_ALIASES:
+                score += 10
+            for alias in DOGOVOR_RUSSIAN_ALIASES:
+                if alias in s_lower or s_lower in alias:
+                    score += 3
+                    break
+
+            if any(c.isalpha() for c in s) and not any(c.isdigit() for c in s):
+                score += 1
+
+        if cell_count == 0:
+            continue
+
+        total_cols = len(df_raw.columns)
+        coverage = cell_count / total_cols if total_cols else 0
+        if coverage >= 0.4:
+            score += int(coverage * 5)
+
+        header_candidates.append({
+            'row_index': i,
+            'row_number': i + 1,
+            'cells': [str(df_raw.iloc[i][c])[:50] for c in range(total_cols)],
+            'score': score,
+            'cell_count': cell_count,
+        })
+        scores.append(score)
+
+    best = sorted(header_candidates, key=lambda x: x['score'], reverse=True)
+    if not best:
+        return {'header_row': 0, 'header_number': 1,
+                'confidence': 'low', 'candidates': [], 'best_score': 0}
+
+    top_score = best[0]['score']
+    second_best_score = best[1]['score'] if len(best) > 1 else 0
+
+    if top_score >= 15 and top_score > second_best_score * 2:
+        confidence = 'high'
+    elif top_score >= 8:
+        confidence = 'medium'
+    else:
+        confidence = 'low'
+
+    return {
+        'header_row': best[0]['row_index'],
+        'header_number': best[0]['row_number'],
+        'confidence': confidence,
+        'best_score': top_score,
+        'second_best_score': second_best_score,
+        'candidates': best[:5],
+    }
 
 
 def analyze_dataframe(df):
@@ -221,6 +302,8 @@ def generate_suggestions_text(analysis, filename):
     lines = []
     lines.append(f"Анализ файла: {filename}")
     lines.append(f"Строк: {analysis['total_rows']}, колонок: {analysis['total_columns']}")
+    if 'header_number' in analysis:
+        lines.append(f"Шапка таблицы: строка {analysis['header_number']} (уверенность: {analysis['header_confidence']})")
     lines.append("")
 
     if analysis['suggestions']:
@@ -282,40 +365,135 @@ def api_analyze():
     if ext not in ('.xlsx', '.xls', '.csv'):
         return jsonify({'error': 'Поддерживаются только .xlsx, .xls, .csv'}), 400
 
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], f.filename)
+    filename = secure_filename(f.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     f.save(filepath)
+
+    header_row = request.form.get('header_row', type=int, default=None)
+
+    if header_row is None:
+        try:
+            df_raw = read_raw_rows(filepath, ext, max_rows=20)
+        except Exception as e:
+            return jsonify({'error': f'Ошибка чтения: {str(e)}'}), 400
+
+        header_info = detect_header_row(df_raw)
+
+        if header_info['confidence'] in ('medium', 'low') and len(header_info['candidates']) > 1:
+            preview_rows = []
+            for c in header_info['candidates'][:5]:
+                preview_rows.append({
+                    'row_number': c['row_number'],
+                    'cells': c['cells'],
+                    'score': c['score'],
+                })
+            return jsonify({
+                'status': 'needs_header_selection',
+                'header_info': header_info,
+                'preview_rows': preview_rows,
+                'message': f'Уверенность: {header_info["confidence"]}. Выберите строку заголовков.',
+            })
+
+        selected_row = header_info['header_row']
+        header_number = header_info['header_number']
+        header_confidence = header_info['confidence']
+    else:
+        selected_row = max(0, header_row - 1)
+        header_number = header_row
+        header_confidence = 'manual'
 
     try:
         if ext == '.csv':
-            df = pd.read_csv(filepath, encoding_errors='replace')
+            import csv
+            all_rows = []
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as csvf:
+                reader = csv.reader(csvf)
+                for row in reader:
+                    all_rows.append(row)
+            if not all_rows:
+                return jsonify({'error': 'Файл пуст'}), 400
+            max_cols = max(len(r) for r in all_rows)
+            padded = [r + [''] * (max_cols - len(r)) for r in all_rows]
+            headers = padded[selected_row]
+            data_rows = padded[selected_row + 1:]
+            df = pd.DataFrame(data_rows, columns=headers)
         else:
-            df = pd.read_excel(filepath)
+            df = pd.read_excel(filepath, header=selected_row)
     except Exception as e:
         return jsonify({'error': f'Ошибка чтения: {str(e)}'}), 400
 
+    if df.empty or len(df.columns) == 0:
+        return jsonify({'error': 'Таблица пуста или не удалось определить колонки'}), 400
+
     analysis = analyze_dataframe(df)
-    suggestions_text = generate_suggestions_text(analysis, f.filename)
+    analysis['header_number'] = header_number
+    analysis['header_confidence'] = header_confidence
+
+    suggestions_text = generate_suggestions_text(analysis, filename)
 
     report = {
-        'filename': f.filename,
+        'status': 'complete',
+        'filename': filename,
         'analyzed_at': datetime.now().isoformat(),
         'analysis': analysis,
         'suggestions_text': suggestions_text,
     }
 
-    report_path = os.path.join(app.config['UPLOAD_FOLDER'],
-                               f'{os.path.splitext(f.filename)[0]}_report.json')
+    report_filename = f'{os.path.splitext(filename)[0]}_report.json'
+    report_path = os.path.join(app.config['UPLOAD_FOLDER'], report_filename)
     with open(report_path, 'w', encoding='utf-8') as rf:
         json.dump(report, rf, ensure_ascii=False, indent=2, default=str)
 
-    report['report_url'] = f'/download/{os.path.basename(report_path)}'
+    report['report_url'] = f'/api/download/{report_filename}'
 
     return jsonify(report)
 
 
-@app.route('/download/<filename>')
+@app.route('/api/preview-header', methods=['POST'])
+def api_preview_header():
+    if 'file' not in request.files:
+        return jsonify({'error': 'Файл не найден'}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({'error': 'Файл не выбран'}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ('.xlsx', '.xls', '.csv'):
+        return jsonify({'error': 'Поддерживаются только .xlsx, .xls, .csv'}), 400
+
+    filename = secure_filename(f.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    f.save(filepath)
+
+    try:
+        df_raw = read_raw_rows(filepath, ext, max_rows=15)
+    except Exception as e:
+        return jsonify({'error': f'Ошибка чтения: {str(e)}'}), 400
+
+    header_info = detect_header_row(df_raw)
+    preview_rows = []
+    for c in header_info['candidates'][:5]:
+        preview_rows.append({
+            'row_number': c['row_number'],
+            'cells': c['cells'],
+            'score': c['score'],
+        })
+
+    return jsonify({
+        'header_info': header_info,
+        'preview_rows': preview_rows,
+        'filename': filename,
+    })
+
+
+@app.route('/api/download/<filename>')
 def download_report(filename):
-    return jsonify({'error': 'Use direct path'}), 404
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Файл не найден'}), 404
+    with open(filepath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return jsonify(data)
 
 
 if __name__ == '__main__':
