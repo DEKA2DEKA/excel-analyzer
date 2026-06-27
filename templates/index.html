@@ -1,0 +1,234 @@
+{% extends 'base.html' %}
+{% block title %}Загрузить файл{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="text-center mb-4">
+            <h2><i class="bi bi-file-earmark-spreadsheet"></i> Анализ Excel-файла</h2>
+            <p class="text-muted">Загрузите файл договоров (.xlsx, .xls, .csv) — программа проанализирует структуру
+            и предложит сопоставление с полями системы dogovor</p>
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-zone-content" id="dropZoneContent">
+                <i class="bi bi-cloud-upload fs-1 text-primary"></i>
+                <p class="mt-2 mb-1"><strong>Перетащите файл сюда</strong></p>
+                <p class="text-muted small mb-2">или нажмите для выбора</p>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none">
+                <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('fileInput').click()">
+                    <i class="bi bi-folder2-open"></i> Выбрать файл
+                </button>
+            </div>
+            <div class="drop-zone-progress d-none" id="dropZoneProgress">
+                <div class="spinner-border text-primary mb-2" role="status"></div>
+                <p class="mb-0">Анализируем файл...</p>
+            </div>
+        </div>
+
+        <div id="errorAlert" class="alert alert-danger d-none mt-3"></div>
+    </div>
+</div>
+
+<div id="reportContainer" class="d-none mt-4"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const dropZoneContent = document.getElementById('dropZoneContent');
+const dropZoneProgress = document.getElementById('dropZoneProgress');
+const errorAlert = document.getElementById('errorAlert');
+const reportContainer = document.getElementById('reportContainer');
+
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+    dropZone.addEventListener(evt, e => { e.preventDefault(); e.stopPropagation(); });
+});
+['dragenter', 'dragover'].forEach(evt => {
+    dropZone.addEventListener(evt, () => dropZone.classList.add('dragover'));
+});
+['dragleave', 'drop'].forEach(evt => {
+    dropZone.addEventListener(evt, () => dropZone.classList.remove('dragover'));
+});
+dropZone.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+function handleFile(file) {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+        showError('Поддерживаются только .xlsx, .xls, .csv');
+        return;
+    }
+    hideError();
+    dropZoneContent.classList.add('d-none');
+    dropZoneProgress.classList.remove('d-none');
+
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch('/api/analyze', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(data => {
+            dropZoneContent.classList.remove('d-none');
+            dropZoneProgress.classList.add('d-none');
+            if (data.error) { showError(data.error); return; }
+            showReport(data);
+        })
+        .catch(err => {
+            dropZoneContent.classList.remove('d-none');
+            dropZoneProgress.classList.add('d-none');
+            showError('Ошибка загрузки: ' + err.message);
+        });
+}
+
+function showError(msg) {
+    errorAlert.textContent = msg;
+    errorAlert.classList.remove('d-none');
+}
+
+function hideError() {
+    errorAlert.classList.add('d-none');
+}
+
+function showReport(data) {
+    const a = data.analysis;
+    let html = `
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-file-text"></i> ${data.filename}</span>
+                <small class="text-muted">${a.total_rows} строк, ${a.total_columns} колонок</small>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-md-4">
+                <div class="stat-card">
+                    <div class="stat-icon bg-primary"><i class="bi bi-table"></i></div>
+                    <div><div class="stat-number">${a.total_columns}</div><div class="stat-label">Колонок</div></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card">
+                    <div class="stat-icon bg-success"><i class="bi bi-rows"></i></div>
+                    <div><div class="stat-number">${a.total_rows}</div><div class="stat-label">Строк</div></div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card">
+                    <div class="stat-icon bg-warning"><i class="bi bi-tag"></i></div>
+                    <div><div class="stat-number">${a.suggestions.length}</div><div class="stat-label">Сопоставлено полей</div></div>
+                </div>
+            </div>
+        </div>`;
+
+    if (a.missing_required && a.missing_required.length) {
+        html += `<div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i> <strong>Отсутствуют важные поля:</strong>
+            <ul class="mb-0 mt-1">`;
+        a.missing_required.forEach(m => {
+            html += `<li>${m.label} <code>${m.field}</code> — ${m.critical ? 'обязательно' : 'опционально'}</li>`;
+        });
+        html += `</ul></div>`;
+    }
+
+    html += `<div class="card mb-3">
+        <div class="card-header"><i class="bi bi-list-columns"></i> Колонки файла</div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Колонка</th>
+                            <th>Тип</th>
+                            <th>Не пустых</th>
+                            <th>Пусто, %</th>
+                            <th>Уникальных</th>
+                            <th>Примеры</th>
+                            <th>Сопоставление</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+    a.columns.forEach(c => {
+        const mapped = c.mapped_field
+            ? `<span class="badge bg-success">${c.mapped_field}</span>`
+            : (c.mapping_confidence
+                ? `<span class="badge bg-warning text-dark">возможно ${c.mapped_field}</span>`
+                : `<span class="badge bg-secondary">не найдено</span>`);
+        const examples = c.sample_values.slice(0, 3).join(', ');
+        html += `<tr>
+            <td><strong>${c.name}</strong></td>
+            <td><code>${c.inferred_type}</code></td>
+            <td>${c.non_null}</td>
+            <td>${c.null_pct}%</td>
+            <td>${c.unique_count}</td>
+            <td class="small text-muted">${examples || '—'}</td>
+            <td>${mapped}</td>
+        </tr>`;
+    });
+    html += `</tbody></table></div></div></div>`;
+
+    if (a.suggestions && a.suggestions.length) {
+        html += `<div class="card mb-3">
+            <div class="card-header"><i class="bi bi-diagram-3"></i> Сопоставление с dogovor</div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead><tr><th>Колонка файла</th><th>→ Поле dogovor</th><th>Описание</th></tr></thead>
+                    <tbody>`;
+        a.suggestions.forEach(s => {
+            if (s.mapped_to) {
+                html += `<tr class="table-success">
+                    <td>${s.column}</td>
+                    <td><code>${s.mapped_to}</code></td>
+                    <td>${s.label}</td>
+                </tr>`;
+            } else if (s.suggest_rename) {
+                html += `<tr class="table-warning">
+                    <td>${s.column}</td>
+                    <td><code>${s.suggest_rename}</code> (переименовать)</td>
+                    <td>${s.label}</td>
+                </tr>`;
+            }
+        });
+        html += `</tbody></table></div></div>`;
+    }
+
+    html += `<div class="card mb-3">
+        <div class="card-header"><i class="bi bi-chat-dots"></i> Рекомендации</div>
+        <div class="card-body">
+            <pre class="mb-0 small" style="white-space: pre-wrap;">${data.suggestions_text}</pre>
+        </div>
+    </div>`;
+
+    html += `<div class="text-center mb-4">
+        <a href="${data.report_url}" class="btn btn-outline-primary" onclick="downloadReport(event, this)">
+            <i class="bi bi-download"></i> Скачать отчёт JSON
+        </a>
+        <button class="btn btn-outline-secondary ms-2" onclick="location.reload()">
+            <i class="bi bi-arrow-repeat"></i> Анализировать другой файл
+        </button>
+    </div>`;
+
+    reportContainer.innerHTML = html;
+    reportContainer.classList.remove('d-none');
+    reportContainer.scrollIntoView({ behavior: 'smooth' });
+}
+
+function downloadReport(e, btn) {
+    e.preventDefault();
+    fetch('/api/analyze', {
+        method: 'POST',
+        body: (() => { const fd = new FormData(); fd.append('file', fileInput.files[0]); return fd; })()
+    })
+    .then(r => r.blob())
+    .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'report.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    });
+}
+</script>
+{% endblock %}
