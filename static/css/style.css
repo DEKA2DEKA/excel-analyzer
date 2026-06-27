@@ -55,3 +55,22 @@ pre {
     border-radius: 8px;
     font-size: 0.85rem;
 }
+
+.col-desc {
+    font-size: 0.8rem;
+    min-width: 180px;
+}
+
+#columnsTable th {
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+#columnsTable td {
+    vertical-align: middle;
+    font-size: 0.82rem;
+}
+
+#columnsTable .form-control {
+    font-size: 0.8rem;
+}

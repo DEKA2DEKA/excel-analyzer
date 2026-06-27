@@ -496,5 +496,58 @@ def download_report(filename):
     return jsonify(data)
 
 
+@app.route('/api/generate-task', methods=['POST'])
+def api_generate_task():
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'Нет данных'}), 400
+
+    filename = data.get('filename', 'файл')
+    header_row = data.get('header_row', 1)
+    columns = data.get('columns', [])
+
+    enabled = [c for c in columns if c.get('included')]
+    if not enabled:
+        return jsonify({'error': 'Не выбрано ни одной колонки'}), 400
+
+    lines = []
+    lines.append(f"Задание на разработку: импорт данных из файла «{filename}»")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Источник: {filename}")
+    lines.append(f"Строка заголовков: {header_row}")
+    lines.append(f"Количество отобранных колонок: {len(enabled)}")
+    lines.append("")
+
+    lines.append("Структура данных:")
+    lines.append("-" * 40)
+    for c in enabled:
+        desc = c.get('description', '').strip() or '—'
+        mapped = c.get('mapped_field', '') or '—'
+        lines.append(f"  • {c['name']}")
+        lines.append(f"    Описание: {desc}")
+        if mapped != '—':
+            lines.append(f"    Поле в dogovor: {mapped} (рекомендуется)")
+        lines.append("")
+
+    lines.append("Требования к разработке:")
+    lines.append("-" * 40)
+    lines.append("1. Создать или доработать функцию импорта данных из Excel/CSV в программу dogovor.")
+    lines.append("2. Сопоставить колонки файла с полями модели Contract согласно таблице выше.")
+    lines.append("3. Если поле не найдено в модели Contract — создать новое или предложить адаптацию.")
+    lines.append("4. Обеспечить обработку пропусков (пустых ячеек), дублей, некорректных форматов.")
+    lines.append("5. После импорта вывести отчёт: сколько записей добавлено, сколько пропущено, с какими ошибками.")
+    lines.append("")
+    lines.append(f"Всего колонок в файле: {len(columns)}, отобрано для импорта: {len(enabled)}.")
+
+    task_text = '\n'.join(lines)
+
+    return jsonify({
+        'task_text': task_text,
+        'enabled_columns': len(enabled),
+        'total_columns': len(columns),
+    })
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

@@ -3,30 +3,34 @@
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-10">
+    <div class="col-md-12">
         <div class="text-center mb-4">
             <h2><i class="bi bi-file-earmark-spreadsheet"></i> Анализ Excel-файла</h2>
             <p class="text-muted">Загрузите файл договоров (.xlsx, .xls, .csv) — программа проанализирует структуру
             и предложит сопоставление с полями системы dogovor</p>
         </div>
 
-        <div class="drop-zone" id="dropZone">
-            <div class="drop-zone-content" id="dropZoneContent">
-                <i class="bi bi-cloud-upload fs-1 text-primary"></i>
-                <p class="mt-2 mb-1"><strong>Перетащите файл сюда</strong></p>
-                <p class="text-muted small mb-2">или нажмите для выбора</p>
-                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none">
-                <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('fileInput').click()">
-                    <i class="bi bi-folder2-open"></i> Выбрать файл
-                </button>
-            </div>
-            <div class="drop-zone-progress d-none" id="dropZoneProgress">
-                <div class="spinner-border text-primary mb-2" role="status"></div>
-                <p class="mb-0">Анализируем файл...</p>
+        <div class="row justify-content-center">
+            <div class="col-md-10">
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-zone-content" id="dropZoneContent">
+                        <i class="bi bi-cloud-upload fs-1 text-primary"></i>
+                        <p class="mt-2 mb-1"><strong>Перетащите файл сюда</strong></p>
+                        <p class="text-muted small mb-2">или нажмите для выбора</p>
+                        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none">
+                        <button class="btn btn-outline-primary btn-sm" onclick="document.getElementById('fileInput').click()">
+                            <i class="bi bi-folder2-open"></i> Выбрать файл
+                        </button>
+                    </div>
+                    <div class="drop-zone-progress d-none" id="dropZoneProgress">
+                        <div class="spinner-border text-primary mb-2" role="status"></div>
+                        <p class="mb-0">Анализируем файл...</p>
+                    </div>
+                </div>
+
+                <div id="errorAlert" class="alert alert-danger d-none mt-3"></div>
             </div>
         </div>
-
-        <div id="errorAlert" class="alert alert-danger d-none mt-3"></div>
     </div>
 </div>
 
@@ -127,6 +131,8 @@ function hideError() {
 
 function showHeaderSelection(data) {
     let html = `
+        <div class="row justify-content-center">
+            <div class="col-md-10">
         <div class="card">
             <div class="card-header">
                 <i class="bi bi-question-circle text-warning"></i>
@@ -157,7 +163,7 @@ function showHeaderSelection(data) {
                 <i class="bi bi-info-circle"></i> Строка с заголовками обычно содержит текст (номер, наименование, контрагент...),
                 без цифр и дат. Если все строки выглядят как данные — выберите первую.
             </div>
-        </div></div>`;
+        </div></div></div></div>`;
     headerSelection.innerHTML = html;
     headerSelection.classList.remove('d-none');
 }
@@ -168,10 +174,15 @@ function showReport(data) {
         ? `<span class="badge bg-info ms-2">Выбрана строка ${a.header_number}</span>`
         : `<span class="badge bg-${a.header_confidence === 'high' ? 'success' : 'warning'} ms-2">Строка ${a.header_number} (${a.header_confidence})</span>`;
 
+    const filename = data.filename;
+    const headerRow = a.header_number;
+
     let html = `
+        <div class="row justify-content-center">
+            <div class="col-md-12">
         <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-file-text"></i> ${data.filename} ${headerBadge}</span>
+                <span><i class="bi bi-file-text"></i> ${filename} ${headerBadge}</span>
                 <small class="text-muted">${a.total_rows} строк, ${a.total_columns} колонок</small>
             </div>
         </div>
@@ -214,35 +225,44 @@ function showReport(data) {
     }
 
     html += `<div class="card mb-3">
-        <div class="card-header"><i class="bi bi-list-columns"></i> Колонки файла</div>
+        <div class="card-header"><i class="bi bi-list-columns"></i> Колонки файла
+            <span class="text-muted small ms-2">— отметьте нужные и опишите каждую для задания агенту</span>
+        </div>
         <div class="card-body p-0">
             <div class="table-responsive">
-                <table class="table table-sm table-hover mb-0">
+                <table class="table table-sm table-hover mb-0" id="columnsTable">
                     <thead class="table-light">
                         <tr>
+                            <th style="width:50px">Вкл.</th>
                             <th>Колонка</th>
-                            <th>Тип</th>
-                            <th>Не пустых</th>
-                            <th>Пусто, %</th>
-                            <th>Уникальных</th>
-                            <th>Примеры</th>
-                            <th>Сопоставление</th>
+                            <th style="width:90px">Тип</th>
+                            <th style="width:70px">Заполн.</th>
+                            <th style="width:60px">Пусто</th>
+                            <th style="width:70px">Уник.</th>
+                            <th style="width:160px">Примеры</th>
+                            <th style="width:120px">Сопоставление</th>
+                            <th style="min-width:200px">Описание колонки для агента</th>
                         </tr>
                     </thead>
                     <tbody>`;
-    a.columns.forEach(c => {
+    a.columns.forEach((c, idx) => {
         const mapped = c.mapped_field
             ? `<span class="badge bg-success">${c.mapped_field}</span>`
-            : `<span class="badge bg-secondary">не найдено</span>`;
+            : `<span class="badge bg-secondary">—</span>`;
         const examples = c.sample_values.slice(0, 3).join(', ');
+        const defaultDesc = c.mapped_field
+            ? `Содержит ${DOGOVOR_FIELDS[c.mapped_field].toLowerCase()}`
+            : `Данные колонки «${c.name}»`;
         html += `<tr>
+            <td class="text-center"><input type="checkbox" class="col-include" data-idx="${idx}" checked></td>
             <td><strong>${c.name}</strong></td>
             <td><code>${c.inferred_type}</code></td>
             <td>${c.non_null}</td>
             <td>${c.null_pct}%</td>
             <td>${c.unique_count}</td>
-            <td class="small text-muted text-truncate" style="max-width:200px">${examples || '—'}</td>
+            <td class="small text-muted text-truncate" style="max-width:160px">${examples || '—'}</td>
             <td>${mapped}</td>
+            <td><input type="text" class="form-control form-control-sm col-desc" data-idx="${idx}" value="${defaultDesc}" placeholder="Опишите что содержит колонка"></td>
         </tr>`;
     });
     html += `</tbody></table></div></div></div>`;
@@ -280,17 +300,128 @@ function showReport(data) {
     </div>`;
 
     html += `<div class="text-center mb-4">
+        <button class="btn btn-success btn-lg me-2" onclick="generateTask('${filename}', ${headerRow})">
+            <i class="bi bi-send"></i> Сформировать задание для агента
+        </button>
         <a href="${data.report_url}" class="btn btn-outline-primary" target="_blank">
             <i class="bi bi-download"></i> Скачать отчёт JSON
         </a>
         <button class="btn btn-outline-secondary ms-2" onclick="location.reload()">
             <i class="bi bi-arrow-repeat"></i> Анализировать другой файл
         </button>
-    </div>`;
+    </div>
+
+    <div id="taskOutput" class="d-none mb-4"></div>
+
+    </div></div>`;
 
     reportContainer.innerHTML = html;
     reportContainer.classList.remove('d-none');
     reportContainer.scrollIntoView({ behavior: 'smooth' });
 }
+
+function generateTask(filename, headerRow) {
+    const includes = document.querySelectorAll('.col-include');
+    const descs = document.querySelectorAll('.col-desc');
+    const columns = [];
+
+    includes.forEach((cb, idx) => {
+        const descInput = document.querySelector(`.col-desc[data-idx="${idx}"]`);
+        const row = cb.closest('tr');
+        const mappedEl = row.querySelector('.badge');
+        const mappedField = mappedEl && !mappedEl.textContent.includes('—') ? mappedEl.textContent.trim() : '';
+        columns.push({
+            name: row.querySelector('strong').textContent,
+            included: cb.checked,
+            description: descInput ? descInput.value : '',
+            mapped_field: mappedField,
+        });
+    });
+
+    const enabled = columns.filter(c => c.included).length;
+    const total = columns.length;
+    if (enabled === 0) {
+        alert('Выберите хотя бы одну колонку для задания.');
+        return;
+    }
+
+    const btn = document.querySelector('.btn-success');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Генерация...';
+
+    fetch('/api/generate-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, header_row: headerRow, columns }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-send"></i> Сформировать задание для агента';
+        if (data.error) { alert('Ошибка: ' + data.error); return; }
+        showTaskOutput(data);
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-send"></i> Сформировать задание для агента';
+        alert('Ошибка: ' + err.message);
+    });
+}
+
+function showTaskOutput(data) {
+    let html = `
+        <div class="card border-success">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-send"></i> Задание для агента</span>
+                <div>
+                    <button class="btn btn-sm btn-light me-1" onclick="copyTaskOutput()"><i class="bi bi-clipboard"></i> Копировать</button>
+                    <button class="btn btn-sm btn-light" onclick="downloadTaskOutput()"><i class="bi bi-download"></i> Скачать</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <pre id="taskOutputPre" class="mb-0 p-3 small" style="white-space: pre-wrap; max-height: 600px; overflow-y: auto;">${data.task_text}</pre>
+            </div>
+        </div>`;
+
+    document.getElementById('taskOutput').innerHTML = html;
+    document.getElementById('taskOutput').classList.remove('d-none');
+    document.getElementById('taskOutput').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyTaskOutput() {
+    const text = document.getElementById('taskOutputPre').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        alert('Скопировано в буфер обмена');
+    }).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert('Скопировано');
+    });
+}
+
+function downloadTaskOutput() {
+    const text = document.getElementById('taskOutputPre').textContent;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'task_for_agent.txt';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+const DOGOVOR_FIELDS = {
+    number: 'Номер договора', name: 'Наименование', counterparty: 'Контрагент',
+    subject: 'Предмет договора', amount: 'Сумма', status: 'Статус',
+    responsible: 'Ответственный', notes: 'Примечания', contract_type: 'Тип (основной/ДС)',
+    received_date: 'Дата получения', processing_date: 'Дата оформления',
+    approval_date: 'Дата согласования', signing_date: 'Дата подписания',
+    sent_date: 'Дата направления', archive_date: 'Дата архивации',
+    destroyed_date: 'Дата уничтожения',
+};
 </script>
 {% endblock %}
