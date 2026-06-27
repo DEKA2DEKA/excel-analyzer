@@ -542,10 +542,29 @@ def api_generate_task():
 
     task_text = '\n'.join(lines)
 
+    enriched = []
+    for c in enabled:
+        enriched.append({
+            'name': c.get('name', ''),
+            'description': c.get('description', '').strip() or '—',
+            'mapped_field': c.get('mapped_field', '') or None,
+        })
+
     return jsonify({
         'task_text': task_text,
-        'enabled_columns': len(enabled),
+        'generated_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'file': filename,
+        'header_row': header_row,
         'total_columns': len(columns),
+        'enabled_columns': len(enabled),
+        'columns': enriched,
+        'requirements': [
+            'Создать или доработать функцию импорта данных из Excel/CSV в программу dogovor',
+            'Сопоставить колонки файла с полями модели Contract',
+            'Если поле не найдено в модели Contract — создать новое или предложить адаптацию',
+            'Обеспечить обработку пропусков (пустых ячеек), дублей, некорректных форматов',
+            'После импорта вывести отчёт: сколько записей добавлено, пропущено, с ошибками',
+        ],
     })
 
 

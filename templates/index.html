@@ -368,12 +368,21 @@ function generateTask(filename, headerRow) {
     });
 }
 
+let _lastTaskData = null;
+
 function showTaskOutput(data) {
+    _lastTaskData = data;
     let html = `
         <div class="card border-success">
             <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
                 <span><i class="bi bi-send"></i> Задание для агента</span>
                 <div>
+                    <div class="btn-group me-2" role="group">
+                        <input type="radio" class="btn-check" name="taskfmt" id="fmtTxt" value="txt" checked onchange="renderTask()">
+                        <label class="btn btn-sm btn-light" for="fmtTxt">TXT</label>
+                        <input type="radio" class="btn-check" name="taskfmt" id="fmtJson" value="json" onchange="renderTask()">
+                        <label class="btn btn-sm btn-light" for="fmtJson">JSON</label>
+                    </div>
                     <button class="btn btn-sm btn-light me-1" onclick="copyTaskOutput()"><i class="bi bi-clipboard"></i> Копировать</button>
                     <button class="btn btn-sm btn-light" onclick="downloadTaskOutput()"><i class="bi bi-download"></i> Скачать</button>
                 </div>
@@ -388,8 +397,26 @@ function showTaskOutput(data) {
     document.getElementById('taskOutput').scrollIntoView({ behavior: 'smooth' });
 }
 
+function getFormat() {
+    return document.querySelector('input[name="taskfmt"]:checked')?.value || 'txt';
+}
+
+function renderTask() {
+    const fmt = getFormat();
+    const pre = document.getElementById('taskOutputPre');
+    if (fmt === 'json') {
+        pre.textContent = JSON.stringify(_lastTaskData, null, 2);
+    } else {
+        pre.textContent = _lastTaskData.task_text;
+    }
+}
+
+function getCurrentText() {
+    return document.getElementById('taskOutputPre').textContent;
+}
+
 function copyTaskOutput() {
-    const text = document.getElementById('taskOutputPre').textContent;
+    const text = getCurrentText();
     navigator.clipboard.writeText(text).then(() => {
         alert('Скопировано в буфер обмена');
     }).catch(() => {
@@ -404,12 +431,15 @@ function copyTaskOutput() {
 }
 
 function downloadTaskOutput() {
-    const text = document.getElementById('taskOutputPre').textContent;
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const text = getCurrentText();
+    const fmt = getFormat();
+    const ext = fmt === 'json' ? 'json' : 'txt';
+    const mime = fmt === 'json' ? 'application/json;charset=utf-8' : 'text/plain;charset=utf-8';
+    const blob = new Blob([text], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'task_for_agent.txt';
+    a.download = 'task_for_agent.' + ext;
     a.click();
     URL.revokeObjectURL(url);
 }
